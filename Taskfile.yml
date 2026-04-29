@@ -1,0 +1,31 @@
+version: '3'
+
+tasks:
+
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  format:
+    desc: Format the Go code
+    cmds:
+      - go fix ./...
+      - go fmt ./...
+
+  test:
+    desc: Run the Go test suite
+    cmds:
+      - go test ./...
+
+  demo:
+    desc: Run the console demo program
+    cmds:
+      - go run ./cmd/demo
+
+  lint:
+    desc: Run golangci-lint in a Docker container
+    cmds:
+      - docker run --rm -v {{toSlash .ROOT_DIR}}:/app -w /app golangci/golangci-lint:v2.11.4 golangci-lint run -v --timeout 5m
+
