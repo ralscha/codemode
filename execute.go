@@ -205,10 +205,17 @@ func buildExecutePrelude(namespaces []registeredToolCallbackNamespace) string {
 	builder.WriteString("  warn: (...args) => __codemode_log('[warn] ' + args.map(String).join(' ')),\n")
 	builder.WriteString("  error: (...args) => __codemode_log('[error] ' + args.map(String).join(' ')),\n")
 	builder.WriteString("};\n")
+	builder.WriteString("const __codemode_call_tool = (bridge, input) => {\n")
+	builder.WriteString("  const payload = input === undefined ? '{}' : JSON.stringify(input);\n")
+	builder.WriteString("  if (payload === undefined) { throw new Error('tool input must be JSON-serializable'); }\n")
+	builder.WriteString("  const response = JSON.parse(bridge(payload));\n")
+	builder.WriteString("  if (response.error) { throw new Error(response.error); }\n")
+	builder.WriteString("  return response.value;\n")
+	builder.WriteString("};\n")
 	for _, namespace := range namespaces {
 		fmt.Fprintf(&builder, "const %s = {};\n", namespace.namespace)
 		for _, callback := range namespace.callbacks {
-			fmt.Fprintf(&builder, "%s.%s = (input) => { const response = JSON.parse(%s(JSON.stringify(input || {}))); if (response.error) { throw new Error(response.error); } return response.value; };\n", namespace.namespace, callback.methodName, callback.bridgeName)
+			fmt.Fprintf(&builder, "%s.%s = (input) => __codemode_call_tool(%s, input);\n", namespace.namespace, callback.methodName, callback.bridgeName)
 		}
 	}
 	return builder.String()

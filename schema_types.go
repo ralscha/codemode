@@ -358,26 +358,14 @@ func literalType(value any) string {
 }
 
 func joinTypes(types []string) string {
-	seen := make(map[string]bool)
-	unique := make([]string, 0, len(types))
-	for _, value := range types {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		unique = append(unique, value)
-	}
-	if len(unique) == 0 {
-		return unknownType
-	}
-	if len(unique) == 1 {
-		return unique[0]
-	}
-	return strings.Join(unique, " | ")
+	return joinUniqueTypes(types, " | ")
 }
 
 func joinIntersections(types []string) string {
+	return joinUniqueTypes(types, " & ")
+}
+
+func joinUniqueTypes(types []string, separator string) string {
 	seen := make(map[string]bool)
 	unique := make([]string, 0, len(types))
 	for _, value := range types {
@@ -394,7 +382,7 @@ func joinIntersections(types []string) string {
 	if len(unique) == 1 {
 		return unique[0]
 	}
-	return strings.Join(unique, " & ")
+	return strings.Join(unique, separator)
 }
 
 func maybeNullable(rendered string, schemaMap map[string]any) string {

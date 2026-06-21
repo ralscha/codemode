@@ -42,6 +42,23 @@ return { answer: added.sum };
 	}
 }
 
+func TestExecuteRejectsNonObjectToolInput(t *testing.T) {
+	t.Parallel()
+
+	_, err := Execute(context.Background(), `return tools.inspect(false);`, defaultNamespace(
+		ToolCallbackDefinition{
+			Name: "inspect",
+			Callback: func(context.Context, map[string]any) (any, error) {
+				t.Fatal("callback should not be called with non-object input")
+				return nil, nil
+			},
+		},
+	))
+	if err == nil || !strings.Contains(err.Error(), "parse tool args") {
+		t.Fatalf("err = %v, want parse tool args error", err)
+	}
+}
+
 func TestExecuteCapturesConsoleOutput(t *testing.T) {
 	t.Parallel()
 

@@ -7,7 +7,9 @@ small JavaScript programs against caller-provided tool callbacks.
 go get github.com/ralscha/codemode
 ```
 
-The root package depends directly on [QuickJS](https://gitlab.com/cznic/quickjs) and the [MCP SDK](https://github.com/modelcontextprotocol/go-sdk).
+The module targets the Go version declared in [go.mod](go.mod). The root
+package depends directly on [QuickJS](https://gitlab.com/cznic/quickjs) and the
+[MCP SDK](https://github.com/modelcontextprotocol/go-sdk).
 
 ## Tool Search
 
@@ -127,6 +129,10 @@ Execution is synchronous. Tool callbacks are exposed as regular JavaScript
 functions, so generated code should not use `await`, `Promise.all(...)`, dynamic
 `import(...)`, or other async-only patterns.
 
+Tool callback inputs are JSON objects. Calling a tool without an argument uses
+an empty object; passing primitive values such as `false`, `0`, or a string is
+reported as an argument parsing error instead of being silently coerced.
+
 Before evaluation, code is normalized for common LLM output shapes:
 
 - markdown code fences are stripped
@@ -195,6 +201,19 @@ Execution options:
 
 - `WithEvalTimeout(...)`: limit JavaScript runtime, default `10s`
 - `WithMemoryLimit(...)`: limit QuickJS memory, default `32 MiB`
+
+## Development
+
+Run the local checks with:
+
+```bash
+go vet ./...
+go test ./...
+```
+
+The GitHub Actions workflow reads the Go version from `go.mod`, runs `go vet`,
+and then runs the test suite. Dependabot is configured for Go modules and
+GitHub Actions updates.
 
 ## License
 
