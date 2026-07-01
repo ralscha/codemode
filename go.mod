@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	modernc.org/quickjs v0.18.2
+	modernc.org/quickjs v0.20.0
 )
 
 require (
