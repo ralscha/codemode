@@ -14,6 +14,11 @@ tasks:
       - go fix ./...
       - go fmt ./...
 
+  build:
+    desc: Build the console demo program
+    cmds:
+      - go build -o codemode-demo{{exeExt}} ./cmd/demo
+
   test:
     desc: Run the Go test suite
     cmds:
