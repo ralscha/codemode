@@ -116,7 +116,7 @@ func (index *ToolIndex) Query(query string, opts ...ToolSearchOption) []ToolSear
 	for _, document := range index.documents {
 		score := index.bm25Score(document, queryTokens)
 		score += nameMatchBoost(document, query, queryTokens)
-		if score < options.minScore {
+		if score <= 0 || score < options.minScore {
 			continue
 		}
 
@@ -154,9 +154,14 @@ func (index *ToolIndex) QueryRegex(pattern string, opts ...ToolSearchOption) ([]
 			continue
 		}
 
+		score := float64(len(matches))
+		if score < options.minScore {
+			continue
+		}
+
 		results = append(results, ToolSearchResult{
 			Definition: document.definition,
-			Score:      float64(len(matches)),
+			Score:      score,
 			Matches:    matches,
 		})
 	}
@@ -195,14 +200,14 @@ func (index *ToolIndex) bm25Score(document toolSearchDocument, queryTokens []str
 
 type toolSearchDocument struct {
 	definition    ToolDefinition
-	normalized    []string
+	fields        []string
 	termFrequency map[string]float64
 	length        int
 	nameValues    []string
 }
 
 func newToolSearchDocument(definition ToolDefinition) toolSearchDocument {
-	normalized := make([]string, 0, 16)
+	fields := make([]string, 0, 16)
 	termFrequency := make(map[string]float64)
 	length := 0
 
@@ -212,7 +217,7 @@ func newToolSearchDocument(definition ToolDefinition) toolSearchDocument {
 			return
 		}
 
-		normalized = append(normalized, strings.ToLower(value))
+		fields = append(fields, value)
 		for _, token := range tokenizeToolSearchText(value) {
 			termFrequency[token] += weight
 			length++
@@ -233,7 +238,7 @@ func newToolSearchDocument(definition ToolDefinition) toolSearchDocument {
 
 	return toolSearchDocument{
 		definition:    definition,
-		normalized:    normalized,
+		fields:        fields,
 		termFrequency: termFrequency,
 		length:        length,
 		nameValues:    nameValues,
@@ -243,9 +248,9 @@ func newToolSearchDocument(definition ToolDefinition) toolSearchDocument {
 func (document toolSearchDocument) matches(queryTokens []string, limit int) []string {
 	matches := make([]string, 0, limit)
 	seen := make(map[string]bool)
-	for _, value := range document.normalized {
+	for _, value := range document.fields {
 		for _, token := range queryTokens {
-			if !strings.Contains(value, token) {
+			if !strings.Contains(strings.ToLower(value), token) {
 				continue
 			}
 			if seen[value] {
@@ -264,7 +269,7 @@ func (document toolSearchDocument) matches(queryTokens []string, limit int) []st
 func (document toolSearchDocument) regexMatches(expression *regexp.Regexp, limit int) []string {
 	matches := make([]string, 0, limit)
 	seen := make(map[string]bool)
-	for _, value := range document.normalized {
+	for _, value := range document.fields {
 		if !expression.MatchString(value) || seen[value] {
 			continue
 		}
@@ -422,14 +427,15 @@ func tokenizeToolSearchText(value string) []string {
 }
 
 func splitCamelCase(value string) string {
+	runes := []rune(value)
 	var builder strings.Builder
-	var previous rune
-	for index, char := range value {
-		if index > 0 && unicode.IsLower(previous) && unicode.IsUpper(char) {
+	for index, char := range runes {
+		if index > 0 && unicode.IsUpper(char) &&
+			(unicode.IsLower(runes[index-1]) || unicode.IsDigit(runes[index-1]) ||
+				(index+1 < len(runes) && unicode.IsUpper(runes[index-1]) && unicode.IsLower(runes[index+1]))) {
 			builder.WriteByte(' ')
 		}
 		builder.WriteRune(char)
-		previous = char
 	}
 	return builder.String()
 }

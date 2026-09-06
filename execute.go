@@ -55,6 +55,13 @@ type ExecuteResult struct {
 }
 
 func Execute(ctx context.Context, code string, namespaces []ToolCallbackNamespace, opts ...Option) (result ExecuteResult, err error) {
+	if ctx == nil {
+		return ExecuteResult{}, fmt.Errorf("execute javascript: context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return ExecuteResult{}, fmt.Errorf("execute javascript: %w", err)
+	}
+
 	resolved := options{
 		namespace:   "tools",
 		evalTimeout: defaultEvalTimeout,
@@ -84,6 +91,16 @@ func execute(ctx context.Context, code string, namespaces []ToolCallbackNamespac
 	if err := vm.SetEvalTimeout(resolved.evalTimeout); err != nil {
 		return ExecuteResult{}, fmt.Errorf("set eval timeout: %w", err)
 	}
+	interruptDone := make(chan struct{})
+	stopInterrupt := context.AfterFunc(ctx, func() {
+		vm.Interrupt()
+		close(interruptDone)
+	})
+	defer func() {
+		if !stopInterrupt() {
+			<-interruptDone
+		}
+	}()
 
 	logs := []string{}
 	if err := vm.RegisterFunc("__codemode_log", func(payload string) {
@@ -99,6 +116,9 @@ func execute(ctx context.Context, code string, namespaces []ToolCallbackNamespac
 
 	wrapped := buildExecutePrelude(registered) + "\n(() => {\n" + normalizeCode(code) + "\n})()"
 	value, err := vm.Eval(wrapped, quickjs.EvalGlobal)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return ExecuteResult{Logs: logs}, fmt.Errorf("execute javascript: %w", contextErr)
+	}
 	if err != nil {
 		return ExecuteResult{Logs: logs}, fmt.Errorf("execute javascript: %w", err)
 	}
@@ -156,14 +176,14 @@ func registerToolCallbacks(ctx context.Context, vm *quickjs.VM, namespace string
 		if err := vm.RegisterFunc(bridgeName, func(payload string) string {
 			input, err := decodeCallbackPayload(payload)
 			if err != nil {
-				return marshalBridgeResponse(nil, fmt.Sprintf("parse tool args: %v", err))
+				return marshalBridgeResponse(nil, fmt.Errorf("parse tool args: %w", err))
 			}
 
 			value, err := callback(ctx, input)
 			if err != nil {
-				return marshalBridgeResponse(nil, err.Error())
+				return marshalBridgeResponse(nil, err)
 			}
-			return marshalBridgeResponse(value, "")
+			return marshalBridgeResponse(value, nil)
 		}, false); err != nil {
 			return nil, fmt.Errorf("register %s: %w", bridgeName, err)
 		}
@@ -176,9 +196,9 @@ func registerToolCallbacks(ctx context.Context, vm *quickjs.VM, namespace string
 
 func sanitizeNamespace(namespace string, fallback string) string {
 	if strings.TrimSpace(namespace) == "" {
-		namespace = fallback
+		return fallback
 	}
-	return sanitizeIdentifier(namespace)
+	return sanitizeNamespaceIdentifier(namespace)
 }
 
 const nullPayload = "null"
@@ -209,11 +229,11 @@ func buildExecutePrelude(namespaces []registeredToolCallbackNamespace) string {
 	builder.WriteString("  const payload = input === undefined ? '{}' : JSON.stringify(input);\n")
 	builder.WriteString("  if (payload === undefined) { throw new Error('tool input must be JSON-serializable'); }\n")
 	builder.WriteString("  const response = JSON.parse(bridge(payload));\n")
-	builder.WriteString("  if (response.error) { throw new Error(response.error); }\n")
+	builder.WriteString("  if (response.error !== null) { throw new Error(response.error); }\n")
 	builder.WriteString("  return response.value;\n")
 	builder.WriteString("};\n")
 	for _, namespace := range namespaces {
-		fmt.Fprintf(&builder, "const %s = {};\n", namespace.namespace)
+		fmt.Fprintf(&builder, "const %s = Object.create(null);\n", namespace.namespace)
 		for _, callback := range namespace.callbacks {
 			fmt.Fprintf(&builder, "%s.%s = (input) => __codemode_call_tool(%s, input);\n", namespace.namespace, callback.methodName, callback.bridgeName)
 		}
@@ -221,7 +241,12 @@ func buildExecutePrelude(namespaces []registeredToolCallbackNamespace) string {
 	return builder.String()
 }
 
-func marshalBridgeResponse(value any, errText string) string {
+func marshalBridgeResponse(value any, bridgeErr error) string {
+	var errText *string
+	if bridgeErr != nil {
+		message := bridgeErr.Error()
+		errText = &message
+	}
 	payload := map[string]any{"value": value, "error": errText}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

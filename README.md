@@ -47,7 +47,7 @@ for _, result := range results {
 `Query(...)` combines BM25-style lexical ranking with exact, normalized, and
 fuzzy name boosts. Schema property names and descriptions carry more weight
 than raw schema JSON, so queries like `matched product items` can find a tool
-from its output shape.
+from its output shape. Tools with no positive relevance score are omitted.
 
 `QueryRegex(...)` provides deterministic filtering:
 
@@ -60,6 +60,8 @@ results, err := index.QueryRegex(`github.*issues`)
 `GenerateFromDefinitions(...)` and `GenerateFromMCPTools(...)` generate
 TypeScript API declarations. The output uses sanitized method names,
 generated input and output types, and JSDoc from tool and schema descriptions.
+Object inputs with no required properties are optional, while tools without an
+input schema are generated as zero-argument functions.
 
 ```go
 api, err := codemode.GenerateFromDefinitions(definitions)
@@ -86,6 +88,10 @@ Supported inputs:
 
 - `GenerateFromDefinitions(...)`: normalized `ToolDefinition` values
 - `GenerateFromMCPTools(...)`: MCP SDK `mcp.Tool` values
+
+The schema converter supports objects, arrays, JSON Schema 2020-12
+`prefixItems` tuples, unions and intersections, enums, constants, local
+`$ref` values, nullable values, and boolean schemas.
 
 `ToolDefinition` supports both input and output schemas. The builder APIs keep
 nested JSON schema values readable:
@@ -128,6 +134,10 @@ other tool runtime.
 Execution is synchronous. Tool callbacks are exposed as regular JavaScript
 functions, so generated code should not use `await`, `Promise.all(...)`, dynamic
 `import(...)`, or other async-only patterns.
+
+`Execute(...)` honors context cancellation in addition to its VM evaluation
+timeout. A canceled context interrupts running JavaScript and is returned as a
+wrapped `context.Canceled` or `context.DeadlineExceeded` error.
 
 Tool callback inputs are JSON objects. Calling a tool without an argument uses
 an empty object; passing primitive values such as `false`, `0`, or a string is
@@ -201,6 +211,11 @@ Execution options:
 
 - `WithEvalTimeout(...)`: limit JavaScript runtime, default `10s`
 - `WithMemoryLimit(...)`: limit QuickJS memory, default `32 MiB`
+
+Namespace and method names are converted to valid JavaScript identifiers.
+Namespace names that would shadow execution-runtime globals receive a trailing
+underscore; for example, `console` becomes `console_` in both generated and
+executed APIs.
 
 ## Development
 

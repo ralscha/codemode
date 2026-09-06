@@ -1,6 +1,10 @@
 package codemode
 
-import "github.com/modelcontextprotocol/go-sdk/mcp"
+import (
+	"maps"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
 
 type ToolDefinition struct {
 	Name         string
@@ -68,6 +72,10 @@ func NewBooleanSchema() SchemaBuilder {
 	return schemaWithType("boolean")
 }
 
+func NewNullSchema() SchemaBuilder {
+	return schemaWithType("null")
+}
+
 func NewArraySchema(items any) SchemaBuilder {
 	return SchemaBuilder{schema: map[string]any{
 		"type":  "array",
@@ -76,21 +84,25 @@ func NewArraySchema(items any) SchemaBuilder {
 }
 
 func (builder SchemaBuilder) WithDescription(description string) SchemaBuilder {
+	builder = builder.clone()
 	builder.schema["description"] = description
 	return builder
 }
 
 func (builder SchemaBuilder) WithProperty(name string, schema any) SchemaBuilder {
+	builder = builder.clone()
 	properties, _ := builder.schema["properties"].(map[string]any)
-	if properties == nil {
-		properties = map[string]any{}
-		builder.schema["properties"] = properties
+	clonedProperties := make(map[string]any, len(properties)+1)
+	if properties != nil {
+		maps.Copy(clonedProperties, properties)
 	}
-	properties[name] = schemaValue(schema)
+	clonedProperties[name] = schemaValue(schema)
+	builder.schema["properties"] = clonedProperties
 	return builder
 }
 
 func (builder SchemaBuilder) WithRequired(names ...string) SchemaBuilder {
+	builder = builder.clone()
 	required := make([]any, 0, len(names))
 	for _, name := range names {
 		required = append(required, name)
@@ -100,16 +112,19 @@ func (builder SchemaBuilder) WithRequired(names ...string) SchemaBuilder {
 }
 
 func (builder SchemaBuilder) WithEnum(values ...any) SchemaBuilder {
+	builder = builder.clone()
 	builder.schema["enum"] = values
 	return builder
 }
 
 func (builder SchemaBuilder) WithItems(schema any) SchemaBuilder {
+	builder = builder.clone()
 	builder.schema["items"] = schemaValue(schema)
 	return builder
 }
 
 func (builder SchemaBuilder) WithAdditionalProperties(value any) SchemaBuilder {
+	builder = builder.clone()
 	builder.schema["additionalProperties"] = schemaValue(value)
 	return builder
 }
@@ -127,6 +142,12 @@ type ToolIndexDefinition interface {
 
 func schemaWithType(schemaType string) SchemaBuilder {
 	return SchemaBuilder{schema: map[string]any{"type": schemaType}}
+}
+
+func (builder SchemaBuilder) clone() SchemaBuilder {
+	cloned := make(map[string]any, len(builder.schema))
+	maps.Copy(cloned, builder.schema)
+	return SchemaBuilder{schema: cloned}
 }
 
 func schemaValue(schema any) any {

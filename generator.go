@@ -21,10 +21,14 @@ type options struct {
 }
 
 func WithNamespace(namespace string) Option {
+	namespace = strings.TrimSpace(namespace)
+	if namespace != "" {
+		namespace = sanitizeNamespaceIdentifier(namespace)
+	}
+
 	return func(opts *options) {
-		namespace = strings.TrimSpace(namespace)
 		if namespace != "" {
-			opts.namespace = sanitizeIdentifier(namespace)
+			opts.namespace = namespace
 		}
 	}
 }
@@ -69,7 +73,6 @@ func GenerateFromDefinitions(definitions []ToolDefinition, opts ...Option) (stri
 
 	entries := make([]renderedTool, 0, len(definitions))
 	usedMethodNames := make(map[string]int)
-	usedTypeNames := make(map[string]int)
 
 	for index, definition := range definitions {
 		if strings.TrimSpace(definition.Name) == "" {
@@ -77,7 +80,6 @@ func GenerateFromDefinitions(definitions []ToolDefinition, opts ...Option) (stri
 		}
 
 		methodName := uniqueIdentifier(sanitizeIdentifier(definition.Name), usedMethodNames)
-		typeStem := uniqueTypeName(toPascalCase(methodName), usedTypeNames)
 
 		inputType := schemaToTypeDeclaration(definition.InputSchema)
 		outputType := schemaToTypeDeclaration(definition.OutputSchema)
@@ -85,7 +87,6 @@ func GenerateFromDefinitions(definitions []ToolDefinition, opts ...Option) (stri
 		entries = append(entries, renderedTool{
 			originalName: definition.Name,
 			methodName:   methodName,
-			typeStem:     typeStem,
 			description:  definition.Description,
 			inputType:    inputType,
 			outputType:   outputType,
@@ -100,7 +101,6 @@ func GenerateFromDefinitions(definitions []ToolDefinition, opts ...Option) (stri
 type renderedTool struct {
 	originalName string
 	methodName   string
-	typeStem     string
 	description  string
 	inputType    string
 	outputType   string
@@ -174,8 +174,12 @@ func sanitizeIdentifier(value string) string {
 	}
 
 	var builder strings.Builder
+	startsWithDigit := false
 	for index, char := range value {
-		if unicode.IsLetter(char) || char == '_' || (index > 0 && unicode.IsDigit(char)) {
+		if index == 0 && unicode.IsDigit(char) {
+			startsWithDigit = true
+		}
+		if unicode.IsLetter(char) || unicode.IsDigit(char) || char == '_' || char == '$' {
 			builder.WriteRune(char)
 			continue
 		}
@@ -186,13 +190,21 @@ func sanitizeIdentifier(value string) string {
 	if identifier == "" {
 		identifier = "tool"
 	}
-	if unicode.IsDigit(rune(identifier[0])) {
+	if startsWithDigit {
 		identifier = "_" + identifier
 	}
 	if tsKeywords[identifier] {
 		identifier += "_"
 	}
 
+	return identifier
+}
+
+func sanitizeNamespaceIdentifier(value string) string {
+	identifier := sanitizeIdentifier(value)
+	if reservedRuntimeIdentifiers[identifier] || strings.HasPrefix(identifier, "__codemode_") {
+		return identifier + "_"
+	}
 	return identifier
 }
 
@@ -203,48 +215,6 @@ func uniqueIdentifier(base string, used map[string]int) string {
 	}
 	used[base]++
 	return fmt.Sprintf("%s_%d", base, used[base])
-}
-
-func uniqueTypeName(base string, used map[string]int) string {
-	if base == "" {
-		base = "Tool"
-	}
-	if used[base] == 0 {
-		used[base] = 1
-		return base
-	}
-	used[base]++
-	return fmt.Sprintf("%s%d", base, used[base])
-}
-
-func toPascalCase(value string) string {
-	parts := strings.FieldsFunc(value, func(char rune) bool {
-		return !unicode.IsLetter(char) && !unicode.IsDigit(char)
-	})
-	if len(parts) == 0 {
-		return "Tool"
-	}
-
-	var builder strings.Builder
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		runes := []rune(part)
-		builder.WriteRune(unicode.ToUpper(runes[0]))
-		for _, char := range runes[1:] {
-			builder.WriteRune(char)
-		}
-	}
-
-	result := builder.String()
-	if result == "" {
-		return "Tool"
-	}
-	if unicode.IsDigit(rune(result[0])) {
-		return "T" + result
-	}
-	return result
 }
 
 func renderDefinitions(entries []renderedTool, namespace string) string {
@@ -278,10 +248,17 @@ func toolFunctionType(entry renderedTool) string {
 	if isNoInputSchema(entry.inputSchema) {
 		return fmt.Sprintf("() => %s", outputType)
 	}
+	if isOptionalInputSchema(entry.inputSchema) {
+		return fmt.Sprintf("(input?: %s) => %s", compactTypeString(entry.inputType), outputType)
+	}
 	return fmt.Sprintf("(input: %s) => %s", compactTypeString(entry.inputType), outputType)
 }
 
 func isNoInputSchema(schemaValue any) bool {
+	if schemaValue == nil {
+		return true
+	}
+
 	schemaMap, ok := schemaValue.(map[string]any)
 	if !ok {
 		return false
@@ -307,6 +284,20 @@ func isNoInputSchema(schemaValue any) bool {
 	}
 	allowed, ok := additional.(bool)
 	return ok && !allowed
+}
+
+func isOptionalInputSchema(schemaValue any) bool {
+	schemaMap, ok := schemaValue.(map[string]any)
+	if !ok {
+		return false
+	}
+
+	if schemaType, _ := schemaMap["type"].(string); schemaType != "" && schemaType != "object" {
+		return false
+	}
+
+	required, _ := schemaMap["required"].([]any)
+	return len(required) == 0
 }
 
 func indentLines(value string, prefix string) string {
@@ -377,6 +368,9 @@ func schemaReturnDocLines(schemaValue any) []string {
 	}
 
 	var lines []string
+	if description, _ := root["description"].(string); strings.TrimSpace(description) != "" {
+		lines = append(lines, "@returns "+oneLine(description))
+	}
 	collectSchemaDocLines(root, "", "@returns", &lines)
 	return lines
 }
@@ -428,6 +422,7 @@ func escapeDoc(value string) string {
 }
 
 var tsKeywords = map[string]bool{
+	"await":      true,
 	"break":      true,
 	"case":       true,
 	"catch":      true,
@@ -450,10 +445,18 @@ var tsKeywords = map[string]bool{
 	"import":     true,
 	"in":         true,
 	"instanceof": true,
+	"interface":  true,
+	"implements": true,
 	"new":        true,
 	"null":       true,
+	"let":        true,
+	"package":    true,
+	"private":    true,
+	"protected":  true,
+	"public":     true,
 	"return":     true,
 	"super":      true,
+	"static":     true,
 	"switch":     true,
 	"this":       true,
 	"throw":      true,
@@ -465,4 +468,13 @@ var tsKeywords = map[string]bool{
 	"while":      true,
 	"with":       true,
 	"yield":      true,
+}
+
+var reservedRuntimeIdentifiers = map[string]bool{
+	"Error":     true,
+	"JSON":      true,
+	"Object":    true,
+	"String":    true,
+	"console":   true,
+	"undefined": true,
 }

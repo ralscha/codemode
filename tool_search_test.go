@@ -1,6 +1,7 @@
 package codemode
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -168,6 +169,48 @@ func TestToolIndexQueryOptions(t *testing.T) {
 	}
 	if !strings.HasPrefix(results[0].Definition.Name, "search-") {
 		t.Fatalf("result = %q, want search tool", results[0].Definition.Name)
+	}
+}
+
+func TestToolIndexQueryOmitsUnmatchedTools(t *testing.T) {
+	t.Parallel()
+
+	index := mustToolIndex(t, []ToolDefinition{
+		{Name: "send-email", Description: "Send an email message"},
+		{Name: "create-project", Description: "Create a project"},
+	})
+
+	if results := index.Query("weather forecast"); len(results) != 0 {
+		t.Fatalf("results = %#v, want no unrelated tools", results)
+	}
+}
+
+func TestToolIndexQueryRegexHonorsMinScore(t *testing.T) {
+	t.Parallel()
+
+	index := mustToolIndex(t, []ToolDefinition{{Name: "ping"}})
+	results, err := index.QueryRegex("ping", WithToolSearchMinScore(2))
+	if err != nil {
+		t.Fatalf("QueryRegex returned error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("results = %#v, want none below minimum score", results)
+	}
+}
+
+func TestToolIndexMatchesPreserveOriginalTextAndSplitInitialisms(t *testing.T) {
+	t.Parallel()
+
+	index := mustToolIndex(t, []ToolDefinition{{
+		Name:        "getHTTPStatus",
+		Description: "Read the HTTP response status",
+	}})
+	results := index.Query("HTTP status")
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if !slices.Contains(results[0].Matches, "getHTTPStatus") {
+		t.Fatalf("matches = %#v, want original tool name", results[0].Matches)
 	}
 }
 

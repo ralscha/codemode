@@ -248,6 +248,97 @@ func TestExecuteHonorsEvalTimeout(t *testing.T) {
 	}
 }
 
+func TestExecuteHonorsContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	started := make(chan struct{})
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	_, err := Execute(ctx, `tools.signal(); while (true) {}`, defaultNamespace(
+		NewToolCallback("signal", func(context.Context, map[string]any) (any, error) {
+			close(started)
+			return nil, nil
+		}),
+	))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestExecuteRejectsCanceledOrNilContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Execute(ctx, `return 1;`, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	var nilContext context.Context
+	if _, err := Execute(nilContext, `return 1;`, nil); err == nil || !strings.Contains(err.Error(), "context is nil") {
+		t.Fatalf("err = %v, want nil context error", err)
+	}
+}
+
+func TestExecuteSupportsReservedNamespaceAndPrototypeMethod(t *testing.T) {
+	t.Parallel()
+
+	result, err := Execute(context.Background(), `return console_.__proto__();`, defaultNamespace(
+		ToolCallbackDefinition{
+			Name: "__proto__",
+			Callback: func(context.Context, map[string]any) (any, error) {
+				return "ok", nil
+			},
+		},
+	), WithNamespace("console"))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Value != "ok" {
+		t.Fatalf("result.Value = %#v, want ok", result.Value)
+	}
+}
+
+func TestExecuteUsesSanitizedInternalNamespaceFallback(t *testing.T) {
+	t.Parallel()
+
+	result, err := Execute(context.Background(), `return __codemode_runtime_.ping();`, defaultNamespace(
+		NewToolCallback("ping", func(context.Context, map[string]any) (string, error) {
+			return "pong", nil
+		}),
+	), WithNamespace("__codemode_runtime"))
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Value != "pong" {
+		t.Fatalf("result.Value = %#v, want pong", result.Value)
+	}
+}
+
+type emptyMessageError struct{}
+
+func (emptyMessageError) Error() string { return "" }
+
+func TestExecutePropagatesEmptyCallbackError(t *testing.T) {
+	t.Parallel()
+
+	_, err := Execute(context.Background(), `return tools.fail();`, defaultNamespace(
+		ToolCallbackDefinition{
+			Name: "fail",
+			Callback: func(context.Context, map[string]any) (any, error) {
+				return nil, emptyMessageError{}
+			},
+		},
+	))
+	if err == nil {
+		t.Fatal("expected callback error")
+	}
+}
+
 func TestExecuteNormalizesBareExpression(t *testing.T) {
 	t.Parallel()
 
@@ -321,6 +412,16 @@ func TestExecuteNormalizesParenthesizedArrowFunction(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 	assertJSONEqual(t, result.Value, 42)
+}
+
+func TestNormalizeDoesNotUnwrapParameterizedArrow(t *testing.T) {
+	t.Parallel()
+
+	got := normalizeCode(`value => value + 1`)
+	want := `return (value => value + 1);`
+	if got != want {
+		t.Fatalf("normalizeCode() = %q, want %q", got, want)
+	}
 }
 
 func TestExecuteDoesNotReturnDeclarations(t *testing.T) {

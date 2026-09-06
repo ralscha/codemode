@@ -106,6 +106,90 @@ func TestToolDefinitionBuilder(t *testing.T) {
 	}
 }
 
+func TestSchemaBuilderBranchesAreIndependent(t *testing.T) {
+	t.Parallel()
+
+	base := NewObjectSchema()
+	withName := base.WithProperty("name", NewStringSchema())
+	withCount := base.WithProperty("count", NewIntegerSchema())
+
+	baseProperties := base.Build()["properties"].(map[string]any)
+	nameProperties := withName.Build()["properties"].(map[string]any)
+	countProperties := withCount.Build()["properties"].(map[string]any)
+	if len(baseProperties) != 0 {
+		t.Fatalf("base properties = %#v, want empty", baseProperties)
+	}
+	if _, ok := nameProperties["count"]; ok {
+		t.Fatalf("name branch unexpectedly contains count: %#v", nameProperties)
+	}
+	if _, ok := countProperties["name"]; ok {
+		t.Fatalf("count branch unexpectedly contains name: %#v", countProperties)
+	}
+}
+
+func TestNullSchemaBuilder(t *testing.T) {
+	t.Parallel()
+
+	if got := schemaToTypeDeclaration(NewNullSchema().Build()); got != "null" {
+		t.Fatalf("schemaToTypeDeclaration() = %q, want null", got)
+	}
+}
+
+func TestGenerateFromDefinitionsOptionalAndMissingInput(t *testing.T) {
+	t.Parallel()
+
+	declaration, err := GenerateFromDefinitions([]ToolDefinition{
+		{
+			Name: "list-items",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"limit": map[string]any{"type": "integer"},
+				},
+			},
+		},
+		{Name: "ping"},
+	})
+	if err != nil {
+		t.Fatalf("GenerateFromDefinitions returned error: %v", err)
+	}
+
+	assertContainsAll(t, declaration,
+		"list_items: (input?: { limit?: number; }) => unknown;",
+		"ping: () => unknown;",
+	)
+}
+
+func TestGenerateFromDefinitionsDocumentsRootOutputAndSanitizesRuntimeNamespace(t *testing.T) {
+	t.Parallel()
+
+	declaration, err := GenerateFromDefinitions([]ToolDefinition{
+		{
+			Name: "status",
+			OutputSchema: map[string]any{
+				"type":        "string",
+				"description": "Current service status",
+			},
+		},
+	}, WithNamespace("console"))
+	if err != nil {
+		t.Fatalf("GenerateFromDefinitions returned error: %v", err)
+	}
+
+	assertContainsAll(t, declaration,
+		"declare const console_ : {",
+		"@returns Current service status",
+	)
+}
+
+func TestSanitizeIdentifierPreservesLeadingDigitsAndDollarSigns(t *testing.T) {
+	t.Parallel()
+
+	if got := sanitizeIdentifier("123-$tool"); got != "_123_$tool" {
+		t.Fatalf("sanitizeIdentifier() = %q, want _123_$tool", got)
+	}
+}
+
 func TestGeneratedDeclarationsCompileWithTypeScript(t *testing.T) {
 	t.Parallel()
 
@@ -260,6 +344,18 @@ func TestSchemaToTypeDeclarationEdges(t *testing.T) {
 			want: "Record<string, number>",
 		},
 		{
+			name: "additionalProperties schema includes declared property types",
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"label": map[string]any{"type": "string"},
+				},
+				"required":             []any{"label"},
+				"additionalProperties": map[string]any{"type": "number"},
+			},
+			want: "{\n  label: string;\n} & Record<string, number | string>",
+		},
+		{
 			name: "ref",
 			schema: map[string]any{
 				"$ref": "#/$defs/project",
@@ -301,6 +397,57 @@ func TestSchemaToTypeDeclarationEdges(t *testing.T) {
 				"enum": []any{"red", float64(2), false, nil},
 			},
 			want: "\"red\" | 2 | false | null",
+		},
+		{
+			name:   "boolean true schema",
+			schema: true,
+			want:   "unknown",
+		},
+		{
+			name:   "boolean false schema",
+			schema: false,
+			want:   "never",
+		},
+		{
+			name: "nullable enum",
+			schema: map[string]any{
+				"enum":     []any{"ready"},
+				"nullable": true,
+			},
+			want: "\"ready\" | null",
+		},
+		{
+			name: "closed prefix tuple",
+			schema: map[string]any{
+				"type": "array",
+				"prefixItems": []any{
+					map[string]any{"type": "string"},
+					map[string]any{"type": "number"},
+				},
+				"items": false,
+			},
+			want: "[string, number]",
+		},
+		{
+			name: "prefix tuple infers array type",
+			schema: map[string]any{
+				"prefixItems": []any{
+					map[string]any{"type": "boolean"},
+				},
+				"items": false,
+			},
+			want: "[boolean]",
+		},
+		{
+			name: "prefix tuple with typed rest",
+			schema: map[string]any{
+				"type": "array",
+				"prefixItems": []any{
+					map[string]any{"type": "number"},
+				},
+				"items": map[string]any{"type": "string"},
+			},
+			want: "[number, ...string[]]",
 		},
 		{
 			name: "required array property drops null union",

@@ -17,7 +17,15 @@ func schemaToTypeDeclaration(schemaValue any) string {
 		return unknownType
 	}
 
-	root, ok := normalizeSchemaValue(schemaValue).(map[string]any)
+	normalized := normalizeSchemaValue(schemaValue)
+	if allowed, ok := normalized.(bool); ok {
+		if allowed {
+			return unknownType
+		}
+		return "never"
+	}
+
+	root, ok := normalized.(map[string]any)
 	if !ok {
 		return unknownType
 	}
@@ -26,6 +34,13 @@ func schemaToTypeDeclaration(schemaValue any) string {
 }
 
 func schemaToTypeExpr(schemaValue any, root map[string]any, seenRefs map[string]bool, indent string) string {
+	if allowed, ok := schemaValue.(bool); ok {
+		if allowed {
+			return unknownType
+		}
+		return "never"
+	}
+
 	schemaMap, ok := schemaValue.(map[string]any)
 	if !ok || len(schemaMap) == 0 {
 		return unknownType
@@ -42,15 +57,15 @@ func schemaToTypeExpr(schemaValue any, root map[string]any, seenRefs map[string]
 		seenRefs[ref] = true
 		resolvedType := schemaToTypeExpr(resolved, root, seenRefs, indent)
 		delete(seenRefs, ref)
-		return resolvedType
+		return maybeNullable(resolvedType, schemaMap)
 	}
 
 	if enumValues, ok := schemaMap["enum"].([]any); ok && len(enumValues) > 0 {
-		return joinTypes(enumToTypes(enumValues))
+		return maybeNullable(joinTypes(enumToTypes(enumValues)), schemaMap)
 	}
 
 	if constValue, ok := schemaMap["const"]; ok {
-		return literalType(constValue)
+		return maybeNullable(literalType(constValue), schemaMap)
 	}
 
 	if oneOf, ok := schemaList(schemaMap, "oneOf"); ok {
@@ -70,7 +85,7 @@ func schemaToTypeExpr(schemaValue any, root map[string]any, seenRefs map[string]
 		switch {
 		case hasProperties(schemaMap):
 			types = []string{"object"}
-		case schemaMap["items"] != nil:
+		case schemaMap["items"] != nil || schemaMap["prefixItems"] != nil:
 			types = []string{"array"}
 		default:
 			return maybeNullable(unknownType, schemaMap)
@@ -157,11 +172,39 @@ func objectType(schemaMap map[string]any, root map[string]any, seenRefs map[stri
 		return base
 	default:
 		valueType := schemaToTypeExpr(additional, root, seenRefs, indent+"  ")
-		return base + fmt.Sprintf(" & Record<string, %s>", valueType)
+		indexTypes := []string{valueType}
+		for _, key := range keys {
+			indexTypes = append(indexTypes, schemaToPropertyTypeExpr(properties[key], root, seenRefs, indent+"  ", required[key]))
+			if !required[key] {
+				indexTypes = append(indexTypes, "undefined")
+			}
+		}
+		return base + fmt.Sprintf(" & Record<string, %s>", joinTypes(indexTypes))
 	}
 }
 
 func arrayType(schemaMap map[string]any, root map[string]any, seenRefs map[string]bool, indent string) string {
+	if prefixItems, ok := schemaMap["prefixItems"].([]any); ok {
+		parts := renderSchemaList(prefixItems, root, seenRefs, indent)
+		if items, exists := schemaMap["items"]; exists {
+			switch allowed := items.(type) {
+			case bool:
+				if allowed {
+					parts = append(parts, "...unknown[]")
+				}
+			default:
+				itemType := schemaToTypeExpr(items, root, seenRefs, indent)
+				if needsParensForArrayUnion(itemType) {
+					itemType = "(" + itemType + ")"
+				}
+				parts = append(parts, "..."+itemType+"[]")
+			}
+		} else {
+			parts = append(parts, "...unknown[]")
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	}
+
 	if tupleItems, ok := schemaMap["items"].([]any); ok {
 		parts := renderSchemaList(tupleItems, root, seenRefs, indent)
 		return "[" + strings.Join(parts, ", ") + "]"

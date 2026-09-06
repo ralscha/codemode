@@ -78,16 +78,10 @@ func findTopLevelArrow(source string) int {
 }
 
 func isArrowParameters(source string) bool {
-	if source == "" {
+	if !strings.HasPrefix(source, "(") || !strings.HasSuffix(source, ")") || !matchingOuterParens(source) {
 		return false
 	}
-	if isIdentifier(source) {
-		return true
-	}
-	if strings.HasPrefix(source, "(") && strings.HasSuffix(source, ")") {
-		return matchingOuterParens(source)
-	}
-	return false
+	return strings.TrimSpace(source[1:len(source)-1]) == ""
 }
 
 func insertReturnForFinalExpression(source string) string {
@@ -136,21 +130,6 @@ func firstWord(source string) string {
 		}
 	}
 	return source
-}
-
-func isIdentifier(source string) bool {
-	for index, r := range source {
-		if index == 0 {
-			if !unicode.IsLetter(r) && r != '_' && r != '$' {
-				return false
-			}
-			continue
-		}
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '$' {
-			return false
-		}
-	}
-	return true
 }
 
 func matchingOuterBraces(source string) bool {
