@@ -3,7 +3,7 @@ module github.com/ralscha/codemode
 go 1.27.1
 
 require (
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	modernc.org/quickjs v0.24.2
 )
 
