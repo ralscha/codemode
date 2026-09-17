@@ -3,7 +3,7 @@ module github.com/ralscha/codemode
 go 1.27.1
 
 require (
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	modernc.org/quickjs v0.24.2
 )
 
@@ -21,7 +21,7 @@ require (
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
-	modernc.org/libc v1.75.7 // indirect
+	modernc.org/libc v1.76.0 // indirect
 	modernc.org/libquickjs v0.13.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
